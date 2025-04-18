@@ -8,9 +8,9 @@ use tokio::runtime::Runtime;
 use tokio_util::io::StreamReader;
 
 fn bench_merge_and_inject(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
+    let rt: Runtime = Runtime::new().unwrap();
 
-    c.bench_function("merge_and_inject_9000", |b| {
+    c.bench_function("merge_and_inject_9000", |b: &mut criterion::Bencher<'_>| {
         b.iter(|| {
             rt.block_on(async {
                 let chunks = (0..9000).map(|_| {
@@ -26,7 +26,7 @@ fn bench_merge_and_inject(c: &mut Criterion) {
         })
     });
 
-    c.bench_function("merge_and_inject_900", |b| {
+    c.bench_function("merge_and_inject_900", |b: &mut criterion::Bencher<'_>| {
         b.iter(|| {
             rt.block_on(async {
                 let chunks = (0..900).map(|_| {
@@ -42,7 +42,7 @@ fn bench_merge_and_inject(c: &mut Criterion) {
         })
     });
 
-    c.bench_function("merge_and_inject_90", |b| {
+    c.bench_function("merge_and_inject_90", |b: &mut criterion::Bencher<'_>| {
         b.iter(|| {
             rt.block_on(async {
                 let chunks = (0..90).map(|_| {

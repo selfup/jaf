@@ -17,12 +17,17 @@ use tokio_util::io::StreamReader;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let addr = ([127, 0, 0, 1], 3000).into();
+    let addr: core::net::SocketAddr = ([127, 0, 0, 1], 3000).into();
     let client: Client<HttpConnector> = Client::new();
 
     let make_svc = make_service_fn(move |_| {
-        let client = client.clone();
-        async move { Ok::<_, Infallible>(service_fn(move |req| proxy_handler(req, client.clone()))) }
+        let client: hyper::client::Client<HttpConnector> = client.clone();
+
+        async move {
+            Ok::<_, Infallible>(service_fn(move |req: Request<Body>| {
+                proxy_handler(req, client.clone())
+            }))
+        }
     });
 
     println!("Proxy listening on http://{}", addr);
@@ -47,15 +52,15 @@ async fn proxy_handler(
         }
     }
 
-    if let Some(ct) = req.headers().get(CONTENT_TYPE) {
-        if ct
+    if let Some(content_type) = req.headers().get(CONTENT_TYPE) {
+        if content_type
             .to_str()
             .unwrap_or_default()
             .starts_with("application/json")
         {
-            let method = req.method().clone();
-            let uri = req.uri().clone();
-            let headers = req.headers().clone();
+            let method: hyper::Method = req.method().clone();
+            let uri: Uri = req.uri().clone();
+            let headers: hyper::HeaderMap = req.headers().clone();
 
             let (mut sender, new_body) = Body::channel();
             let body_stream = req
@@ -67,7 +72,7 @@ async fn proxy_handler(
                     .await
                     .unwrap();
 
-                let bytes = serde_json::to_vec(&merged).unwrap();
+                let bytes: Vec<u8> = serde_json::to_vec(&merged).unwrap();
 
                 sender.send_data(Bytes::from(bytes)).await.unwrap();
                 sender.send_trailers(Default::default()).await.unwrap();
@@ -93,14 +98,14 @@ async fn proxy_handler(
         }
     };
 
-    if let Some(ct) = resp.headers().get(CONTENT_TYPE) {
-        if ct
+    if let Some(content_type) = resp.headers().get(CONTENT_TYPE) {
+        if content_type
             .to_str()
             .unwrap_or_default()
             .starts_with("application/json")
         {
-            let status = resp.status();
-            let mut headers = resp.headers().clone();
+            let status: hyper::StatusCode = resp.status();
+            let mut headers: hyper::HeaderMap = resp.headers().clone();
 
             headers.remove(CONTENT_TYPE);
             headers.remove("content-length");
@@ -113,27 +118,30 @@ async fn proxy_handler(
 
             tokio::spawn(async move {
                 // Merge and inject proxied flag
-                let mut map = match merge_and_inject(StreamReader::new(body_stream))
-                    .await
-                    .unwrap()
-                {
-                    Value::Object(map) => map,
-                    other => {
-                        let mut m = serde_json::Map::new();
-                        m.insert("value".into(), other);
-                        m
-                    }
-                };
+                let mut map: serde_json::map::Map<String, Value> =
+                    match merge_and_inject(StreamReader::new(body_stream))
+                        .await
+                        .unwrap()
+                    {
+                        Value::Object(map) => map,
+                        other => {
+                            let mut m: serde_json::map::Map<String, Value> = serde_json::Map::new();
+
+                            m.insert("value".into(), other);
+
+                            m
+                        }
+                    };
 
                 map.insert("proxied".to_string(), json!(true));
 
-                let bytes = serde_json::to_vec(&Value::Object(map)).unwrap();
+                let bytes: Vec<u8> = serde_json::to_vec(&Value::Object(map)).unwrap();
 
                 sender.send_data(Bytes::from(bytes)).await.unwrap();
                 sender.send_trailers(Default::default()).await.unwrap();
             });
 
-            let mut builder = Response::builder().status(status);
+            let mut builder: hyper::http::response::Builder = Response::builder().status(status);
 
             for (k, v) in headers.iter() {
                 builder = builder.header(k, v.clone());
@@ -160,13 +168,13 @@ mod tests {
     async fn test_upstream_unreachable() {
         let uri: Uri = "http://127.0.0.1:59999/".parse().unwrap();
 
-        let req = Request::builder().uri(uri).body(Body::empty()).unwrap();
-        let client = Client::new();
-        let resp = proxy_handler(req, client).await.unwrap();
+        let req: Request<Body> = Request::builder().uri(uri).body(Body::empty()).unwrap();
+        let client: Client<HttpConnector> = Client::new();
+        let resp: Response<Body> = proxy_handler(req, client).await.unwrap();
 
         assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
 
-        let body = to_bytes(resp.into_body()).await.unwrap();
+        let body: Bytes = to_bytes(resp.into_body()).await.unwrap();
         let s = std::str::from_utf8(&body).unwrap();
 
         assert!(s.contains("Upstream error:"));
@@ -176,23 +184,26 @@ mod tests {
     async fn test_passthrough_non_json_response() {
         let (tx, rx) = oneshot::channel();
 
-        let server = tokio::spawn(async move {
+        let server: tokio::task::JoinHandle<()> = tokio::spawn(async move {
             let route =
                 warp::any().map(|| Response::builder().status(200).body("plain text").unwrap());
+
             let (addr, fut) = warp::serve(route).bind_ephemeral(([127, 0, 0, 1], 0));
+
             tx.send(addr).unwrap();
+
             fut.await;
         });
 
-        let addr = rx.await.unwrap();
+        let addr: std::net::SocketAddr = rx.await.unwrap();
         let uri: Uri = format!("http://{}/", addr).parse().unwrap();
-        let req = Request::builder().uri(uri).body(Body::empty()).unwrap();
-        let client = Client::new();
-        let resp = proxy_handler(req, client).await.unwrap();
+        let req: Request<Body> = Request::builder().uri(uri).body(Body::empty()).unwrap();
+        let client: Client<HttpConnector> = Client::new();
+        let resp: Response<Body> = proxy_handler(req, client).await.unwrap();
 
         assert_eq!(resp.status(), 200);
 
-        let body = to_bytes(resp.into_body()).await.unwrap();
+        let body: Bytes = to_bytes(resp.into_body()).await.unwrap();
 
         assert_eq!(&body[..], b"plain text");
 
@@ -203,32 +214,36 @@ mod tests {
     async fn integration_proxy_injects() {
         let (tx, rx) = oneshot::channel();
 
-        let server = tokio::spawn(async move {
+        let server: tokio::task::JoinHandle<()> = tokio::spawn(async move {
             let route = warp::any().map(|| {
                 let s = stream::iter(vec![
                     Ok::<Bytes, io::Error>(Bytes::from_static(b"{\"x\":42}")),
                     Ok(Bytes::from_static(b"{\"y\":99}")),
                 ]);
+
                 Response::builder()
                     .header(CONTENT_TYPE, "application/json")
                     .body(Body::wrap_stream(s))
                     .unwrap()
             });
+
             let (addr, fut) = warp::serve(route).bind_ephemeral(([127, 0, 0, 1], 0));
+
             tx.send(addr).unwrap();
+
             fut.await;
         });
 
-        let addr = rx.await.unwrap();
+        let addr: std::net::SocketAddr = rx.await.unwrap();
         let uri: Uri = format!("http://{}/", addr).parse().unwrap();
-        let req = Request::builder()
+        let req: Request<Body> = Request::builder()
             .uri(uri)
             .header(CONTENT_TYPE, "application/json")
             .body(Body::empty())
             .unwrap();
 
-        let client = Client::new();
-        let resp = proxy_handler(req, client).await.unwrap();
+        let client: Client<HttpConnector> = Client::new();
+        let resp: Response<Body> = proxy_handler(req, client).await.unwrap();
 
         let out: Value =
             serde_json::from_slice(&to_bytes(resp.into_body()).await.unwrap()).unwrap();
