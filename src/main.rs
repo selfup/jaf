@@ -15,6 +15,11 @@ use serde_json::{Value, json};
 use std::convert::Infallible;
 use tokio_util::io::StreamReader;
 
+const JAF_ENTRY_POINT: &'static str = "127.0.0.1:3000";
+const JAF_PROXY_LISTENING_ON: &'static str = "JAF listening on";
+const JAF_UPSTREAM_ERROR: &'static str = "JAF -- Upstream error";
+const JAF_PROXY_FLAG: &'static str = "JAF Proxied";
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let addr: core::net::SocketAddr = ([127, 0, 0, 1], 3000).into();
@@ -30,7 +35,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     });
 
-    println!("Proxy listening on http://{}", addr);
+    println!("{} http://{}", JAF_PROXY_LISTENING_ON, addr);
 
     Server::bind(&addr).serve(make_svc).await?;
 
@@ -42,7 +47,7 @@ async fn proxy_handler(
     client: Client<HttpConnector>,
 ) -> Result<Response<Body>, Infallible> {
     if let Some(auth) = req.uri().authority().map(|a| a.as_str()) {
-        if auth == "127.0.0.1:3000" {
+        if auth == JAF_ENTRY_POINT {
             let mut parts = req.uri().clone().into_parts();
 
             parts.scheme = Some("https".parse().unwrap());
@@ -93,7 +98,7 @@ async fn proxy_handler(
         Err(e) => {
             return Ok(Response::builder()
                 .status(502)
-                .body(Body::from(format!("Upstream error: {}", e)))
+                .body(Body::from(format!("{}: {}", JAF_UPSTREAM_ERROR, e)))
                 .unwrap());
         }
     };
@@ -133,7 +138,7 @@ async fn proxy_handler(
                         }
                     };
 
-                map.insert("proxied".to_string(), json!(true));
+                map.insert(JAF_PROXY_FLAG.to_string(), json!(true));
 
                 let bytes: Vec<u8> = serde_json::to_vec(&Value::Object(map)).unwrap();
 
@@ -177,7 +182,7 @@ mod tests {
         let body: Bytes = to_bytes(resp.into_body()).await.unwrap();
         let s = std::str::from_utf8(&body).unwrap();
 
-        assert!(s.contains("Upstream error:"));
+        assert!(s.contains(JAF_UPSTREAM_ERROR));
     }
 
     #[tokio::test]
@@ -250,7 +255,7 @@ mod tests {
 
         assert_eq!(out["x"], 42);
         assert_eq!(out["y"], 99);
-        assert_eq!(out["proxied"], true);
+        assert_eq!(out[JAF_PROXY_FLAG], true);
 
         server.abort();
     }
