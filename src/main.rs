@@ -19,6 +19,8 @@ const JAF_ENTRY_POINT: &'static str = "127.0.0.1:3000";
 const JAF_PROXY_LISTENING_ON: &'static str = "JAF listening on";
 const JAF_UPSTREAM_ERROR: &'static str = "JAF -- Upstream error";
 const JAF_PROXY_FLAG: &'static str = "JAF Proxied";
+const APPLICATION_JSON: &'static str = "application/json";
+const CONTENT_LENGTH: &'static str = "content-length";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -61,7 +63,7 @@ async fn proxy_handler(
         if content_type
             .to_str()
             .unwrap_or_default()
-            .starts_with("application/json")
+            .starts_with(APPLICATION_JSON)
         {
             let method: hyper::Method = req.method().clone();
             let uri: Uri = req.uri().clone();
@@ -103,17 +105,17 @@ async fn proxy_handler(
         }
     };
 
-    if let Some(content_type) = resp.headers().get(CONTENT_TYPE) {
+    if let Some(content_type) = resp.headers().get(hyper::header::CONTENT_TYPE) {
         if content_type
             .to_str()
             .unwrap_or_default()
-            .starts_with("application/json")
+            .starts_with(APPLICATION_JSON)
         {
             let status: hyper::StatusCode = resp.status();
             let mut headers: hyper::HeaderMap = resp.headers().clone();
 
             headers.remove(CONTENT_TYPE);
-            headers.remove("content-length");
+            headers.remove(CONTENT_LENGTH);
 
             let (mut sender, body) = Body::channel();
 
@@ -164,7 +166,7 @@ mod tests {
     use super::*;
     use bytes::Bytes;
     use futures::stream;
-    use hyper::{Body, Client, Request, StatusCode, body::to_bytes, header::CONTENT_TYPE};
+    use hyper::{Body, Client, Request, StatusCode, body::to_bytes};
     use std::io;
     use tokio::sync::oneshot;
     use warp::Filter;
@@ -227,7 +229,7 @@ mod tests {
                 ]);
 
                 Response::builder()
-                    .header(CONTENT_TYPE, "application/json")
+                    .header(CONTENT_TYPE, APPLICATION_JSON)
                     .body(Body::wrap_stream(s))
                     .unwrap()
             });
@@ -243,7 +245,7 @@ mod tests {
         let uri: Uri = format!("http://{}/", addr).parse().unwrap();
         let req: Request<Body> = Request::builder()
             .uri(uri)
-            .header(CONTENT_TYPE, "application/json")
+            .header(CONTENT_TYPE, APPLICATION_JSON)
             .body(Body::empty())
             .unwrap();
 
