@@ -124,7 +124,6 @@ async fn proxy_handler(
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
 
             tokio::spawn(async move {
-                // Merge and inject proxied flag
                 let mut map: serde_json::map::Map<String, Value> =
                     match merge_and_inject(StreamReader::new(body_stream))
                         .await
@@ -132,11 +131,12 @@ async fn proxy_handler(
                     {
                         Value::Object(map) => map,
                         other => {
-                            let mut m: serde_json::map::Map<String, Value> = serde_json::Map::new();
+                            let mut serde_map: serde_json::map::Map<String, Value> =
+                                serde_json::Map::new();
 
-                            m.insert("value".into(), other);
+                            serde_map.insert("value".into(), other);
 
-                            m
+                            serde_map
                         }
                     };
 

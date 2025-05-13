@@ -16,25 +16,25 @@ where
     let mut items: Vec<serde_json::Map<String, Value>> = Vec::new();
 
     loop {
-        let n: usize = reader.read(&mut temp).await?;
+        let payload_size: usize = reader.read(&mut temp).await?;
 
-        if n == 0 {
+        if payload_size == 0 {
             break;
         }
 
-        buf.extend_from_slice(&temp[..n]);
+        buf.extend_from_slice(&temp[..payload_size]);
 
-        let mut de: serde_json::StreamDeserializer<'_, serde_json::de::SliceRead<'_>, Value> =
+        let mut payload: serde_json::StreamDeserializer<'_, serde_json::de::SliceRead<'_>, Value> =
             Deserializer::from_slice(&buf).into_iter::<Value>();
 
         let mut offset: usize = 0;
 
-        while let Some(res) = de.next() {
+        while let Some(res) = payload.next() {
             match res {
                 Ok(Value::Object(map)) => items.push(map),
                 Ok(_) => {}
                 Err(err) => {
-                    // If it's an EOF-incomplete error, wait for more data. Otherwise, propagate.
+                    // If EOF-incomplete error, wait for more data. Otherwise, propagate.
                     if err.classify() == serde_json::error::Category::Eof {
                         break;
                     } else {
@@ -43,7 +43,7 @@ where
                 }
             }
 
-            offset = de.byte_offset();
+            offset = payload.byte_offset();
         }
 
         buf = buf.split_off(offset);
